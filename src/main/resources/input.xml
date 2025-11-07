@@ -32,6 +32,12 @@
                             </Trade>
                         </Trades>
                     </TU_FFR_REPORT>
+                    <Trades>
+                        <Name>Test</Name>
+                    </Trades>
+                    <Trade>
+                        <Name>Test</Name>
+                    </Trade>
                 </Customer>
             </Customers>
         </Application>
