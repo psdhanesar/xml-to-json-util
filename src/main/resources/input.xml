@@ -1,0 +1,39 @@
+<request>
+    <Applications>
+        <Application appId="APP-001">
+            <Customers>
+                <Customer>
+                    <FirstName>John</FirstName>
+                    <LastName>Doe</LastName>
+                    <TU_FFR_REPORT>
+                        <Trades>
+                            <Trade>
+                                <TradeId>123</TradeId>
+                                <Amount>1000</Amount>
+                                <Currency>CAD</Currency>
+                            </Trade>
+                        </Trades>
+                    </TU_FFR_REPORT>
+                </Customer>
+                <Customer>
+                    <FirstName>Jane</FirstName>
+                    <LastName>Smith</LastName>
+                    <TU_FFR_REPORT>
+                        <Trades>
+                            <Trade>
+                                <TradeId>999</TradeId>
+                                <Amount>2500</Amount>
+                                <Currency>USD</Currency>
+                            </Trade>
+                            <Trade>
+                                <TradeId>1000</TradeId>
+                                <Amount>3000</Amount>
+                                <Currency>USD</Currency>
+                            </Trade>
+                        </Trades>
+                    </TU_FFR_REPORT>
+                </Customer>
+            </Customers>
+        </Application>
+    </Applications>
+</request>

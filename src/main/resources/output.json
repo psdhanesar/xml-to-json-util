@@ -1,0 +1,40 @@
+{
+  "applications": [
+    {
+      "appId": "APP-001",
+      "customers": [
+        {
+          "firstName": "John",
+          "lastName": "Doe",
+          "tuffrReport": {
+            "trades": [
+              {
+                "tradeId": "123",
+                "amount": "1000",
+                "currency": "CAD"
+              }
+            ]
+          }
+        },
+        {
+          "firstName": "Jane",
+          "lastName": "Smith",
+          "tuffrReport": {
+            "trades": [
+              {
+                "tradeId": "999",
+                "amount": "2500",
+                "currency": "USD"
+              },
+              {
+                "tradeId": "1000",
+                "amount": "3000",
+                "currency": "USD"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "Applications": "applications",
+  "Application": "application",
+  "Customers": "customers",
+  "Customer": "customer",
+  "FirstName": "firstName",
+  "LastName": "lastName",
+  "TU_FFR_REPORT": "tuffrReport",
+  "Trades": "trades",
+  "Trade": "trade",
+  "TradeId": "tradeId",
+  "Amount": "amount",
+  "Currency": "currency"
+}
