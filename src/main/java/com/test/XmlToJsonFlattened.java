@@ -22,7 +22,7 @@ public class XmlToJsonFlattened {
         // === 1. Load resources from classpath ===
         TransformConfig config = loadTransformConfig(jsonMapper, "transform-config.json");
         Map<String, String> renameMap = config.renameMap != null ? config.renameMap : Map.of();
-        Map<String, String> wrapperMap = config.wrappers != null ? config.wrappers : Map.of();
+        Map<String, WrapperRule> wrapperRules = config.wrappers != null ? config.wrappers : Map.of();
 
         // === 2. Read XML input from resources ===
         XmlMapper xmlMapper = new XmlMapper();
@@ -32,8 +32,8 @@ public class XmlToJsonFlattened {
         // First, rename so wrapper keys align with wrapperMap which is lowerCamelCase
         JsonNode renamed = renameFields(xmlTree, renameMap);
         // Only normalize arrays for plural->singular wrapper structures (e.g., trades -> trade)
-        JsonNode normalizedWrappers = normalizeWrapperArrays(renamed, wrapperMap);
-        JsonNode flattened = flattenWrappers(normalizedWrappers, wrapperMap);
+        JsonNode normalizedWrappers = normalizeWrapperArrays(renamed, wrapperRules);
+        JsonNode flattened = flattenWrappers(normalizedWrappers, wrapperRules);
 
         // === 4. Write to JSON file in /target/output.json (or just print) ===
         String outputJson = jsonMapper.writerWithDefaultPrettyPrinter().writeValueAsString(flattened);
@@ -57,19 +57,20 @@ public class XmlToJsonFlattened {
     // ---------- Transformation passes ----------
     // Removed legacy forceArrays; array normalization is now wrapper-aware only.
 
-    private static JsonNode normalizeWrapperArrays(JsonNode node, Map<String, String> wrapperMap) {
+    private static JsonNode normalizeWrapperArrays(JsonNode node, Map<String, WrapperRule> wrapperRules) {
         if (node.isObject()) {
             ObjectNode obj = (ObjectNode) node;
             // Recurse first
             List<String> fieldNames = new ArrayList<>();
             obj.fieldNames().forEachRemaining(fieldNames::add);
             for (String f : fieldNames) {
-                obj.set(f, normalizeWrapperArrays(obj.get(f), wrapperMap));
+                obj.set(f, normalizeWrapperArrays(obj.get(f), wrapperRules));
             }
-            // Promote plural objects that wrap singular into arrays: plural -> [items]
-            for (Map.Entry<String, String> e : wrapperMap.entrySet()) {
+            // Promote plural objects that wrap singular into arrays: plural -> [items] (rule-driven)
+            for (Map.Entry<String, WrapperRule> e : wrapperRules.entrySet()) {
                 String plural = e.getKey();
-                String singular = e.getValue();
+                String singular = e.getValue() != null ? e.getValue().singular : null;
+                if (singular == null) continue;
                 if (obj.has(plural) && obj.get(plural).isObject()) {
                     JsonNode wrapperNode = obj.get(plural);
                     if (wrapperNode.has(singular)) {
@@ -84,11 +85,35 @@ public class XmlToJsonFlattened {
                     }
                 }
             }
+            // Auto-detect wrapper promotion when no explicit rule exists
+            List<String> currentFields = new ArrayList<>();
+            obj.fieldNames().forEachRemaining(currentFields::add);
+            for (String plural : currentFields) {
+                if (wrapperRules.containsKey(plural)) continue; // skip, rule already handled
+                JsonNode maybeWrapper = obj.get(plural);
+                if (maybeWrapper != null && maybeWrapper.isObject()) {
+                    ObjectNode wrapperObj = (ObjectNode) maybeWrapper;
+                    if (wrapperObj.size() == 1) {
+                        String onlyKey = wrapperObj.fieldNames().next();
+                        String guessedSingular = guessSingular(plural);
+                        if (guessedSingular != null && guessedSingular.equals(onlyKey)) {
+                            JsonNode inner = wrapperObj.get(onlyKey);
+                            if (inner.isArray()) {
+                                obj.set(plural, inner);
+                            } else {
+                                ArrayNode arr = obj.arrayNode();
+                                arr.add(inner);
+                                obj.set(plural, arr);
+                            }
+                        }
+                    }
+                }
+            }
             return obj;
         } else if (node.isArray()) {
             ArrayNode arr = (ArrayNode) node;
             for (int i = 0; i < arr.size(); i++) {
-                arr.set(i, normalizeWrapperArrays(arr.get(i), wrapperMap));
+                arr.set(i, normalizeWrapperArrays(arr.get(i), wrapperRules));
             }
             return arr;
         }
@@ -153,7 +178,7 @@ public class XmlToJsonFlattened {
         return result.toString();
     }
 
-    private static JsonNode flattenWrappers(JsonNode node, Map<String, String> wrapperMap) {
+    private static JsonNode flattenWrappers(JsonNode node, Map<String, WrapperRule> wrapperRules) {
         if (node.isObject()) {
             ObjectNode obj = (ObjectNode) node;
 
@@ -161,13 +186,15 @@ public class XmlToJsonFlattened {
             List<String> fieldNames = new ArrayList<>();
             obj.fieldNames().forEachRemaining(fieldNames::add);
             for (String f : fieldNames) {
-                obj.set(f, flattenWrappers(obj.get(f), wrapperMap));
+                obj.set(f, flattenWrappers(obj.get(f), wrapperRules));
             }
 
-            // now flatten
-            for (Map.Entry<String, String> e : wrapperMap.entrySet()) {
+            // now flatten (rule-driven)
+            for (Map.Entry<String, WrapperRule> e : wrapperRules.entrySet()) {
                 String plural = e.getKey();
-                String singular = e.getValue();
+                WrapperRule rule = e.getValue();
+                if (rule == null || rule.singular == null) continue;
+                String singular = rule.singular;
 
                 // Case A: plural is an object that wraps singular -> lift singular items into plural array
                 if (obj.has(plural) && obj.get(plural).isObject()) {
@@ -200,23 +227,100 @@ public class XmlToJsonFlattened {
                             newArr.add(element);
                         }
                     }
-                    obj.set(plural, newArr);
+
+                    // Smart flattening of simple value lists (rule-driven)
+                    ArrayNode maybeFlattened = tryFlattenSimpleValues(newArr, rule);
+                    obj.set(plural, maybeFlattened != null ? maybeFlattened : newArr);
                 }
             }
+
+            // default generic flattening for arrays with no wrapper rule
+            List<String> afterRuleFieldNames = new ArrayList<>();
+            obj.fieldNames().forEachRemaining(afterRuleFieldNames::add);
+            for (String f : afterRuleFieldNames) {
+                if (wrapperRules.containsKey(f)) continue; // already handled by rule
+                JsonNode candidate = obj.get(f);
+                if (candidate != null && candidate.isArray()) {
+                    ArrayNode flattened = tryFlattenSimpleValuesGeneric((ArrayNode) candidate);
+                    if (flattened != null) {
+                        obj.set(f, flattened);
+                    }
+                }
+            }
+
             return obj;
         } else if (node.isArray()) {
             ArrayNode arr = (ArrayNode) node;
             for (int i = 0; i < arr.size(); i++) {
-                arr.set(i, flattenWrappers(arr.get(i), wrapperMap));
+                arr.set(i, flattenWrappers(arr.get(i), wrapperRules));
             }
             return arr;
         }
         return node;
     }
 
+    private static ArrayNode tryFlattenSimpleValues(ArrayNode arr, WrapperRule rule) {
+        boolean flattenEnabled = rule.flattenSimpleValues == null || rule.flattenSimpleValues;
+        if (!flattenEnabled) return null;
+        String candidateKey = rule.flattenKey != null ? rule.flattenKey : rule.singular;
+        if (candidateKey == null || candidateKey.isEmpty()) return null;
+        if (arr.isEmpty()) return null;
+        ArrayNode flattened = arr.arrayNode();
+        for (int i = 0; i < arr.size(); i++) {
+            JsonNode el = arr.get(i);
+            if (!el.isObject()) return null;
+            ObjectNode elObj = (ObjectNode) el;
+            if (elObj.size() != 1) return null;
+            if (!elObj.has(candidateKey)) return null;
+            JsonNode value = elObj.get(candidateKey);
+            if (value.isObject() || value.isArray()) return null;
+            flattened.add(value);
+        }
+        return flattened;
+    }
+
+    private static ArrayNode tryFlattenSimpleValuesGeneric(ArrayNode arr) {
+        if (arr.isEmpty()) return null;
+        String commonKey = null;
+        ArrayNode flattened = arr.arrayNode();
+        for (int i = 0; i < arr.size(); i++) {
+            JsonNode el = arr.get(i);
+            if (!el.isObject()) return null;
+            ObjectNode elObj = (ObjectNode) el;
+            if (elObj.size() != 1) return null;
+            String key = elObj.fieldNames().next();
+            if (commonKey == null) {
+                commonKey = key;
+            } else if (!commonKey.equals(key)) {
+                return null;
+            }
+            JsonNode value = elObj.get(key);
+            if (value.isObject() || value.isArray()) return null;
+            flattened.add(value);
+        }
+        return flattened;
+    }
+
+    private static String guessSingular(String plural) {
+        if (plural == null || plural.isEmpty()) return null;
+        if (plural.endsWith("ies") && plural.length() > 3) {
+            return plural.substring(0, plural.length() - 3) + "y";
+        }
+        if (plural.endsWith("s") && plural.length() > 1) {
+            return plural.substring(0, plural.length() - 1);
+        }
+        return null;
+    }
+
     // ---------- Config model ----------
     public static class TransformConfig {
         public Map<String, String> renameMap;
-        public Map<String, String> wrappers;
+        public Map<String, WrapperRule> wrappers;
+    }
+
+    public static class WrapperRule {
+        public String singular;
+        public Boolean flattenSimpleValues; // default true if null
+        public String flattenKey; // optional override key to pick for value extraction
     }
 }
