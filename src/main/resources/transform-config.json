@@ -1,0 +1,11 @@
+{
+  "renameMap": {
+    "tuFfrReport": "tuFfrReportTest",
+    "Applications": "applicationstest"
+  },
+  "wrappers": {
+    "applicationstest": "application",
+    "customers": "customer",
+    "trades": "trade"
+  }
+}
