@@ -140,18 +140,32 @@ public class XmlToJsonFlattened {
             obj.fieldNames().forEachRemaining(fieldNames::add);
             for (String f : fieldNames) {
                 String childPath = currentPath.isEmpty() ? f : currentPath + "." + f;
-                JsonNode coercedChild = forceArraysByPath(obj.get(f), forcedPaths, childPath);
-                // If this child's path must be an array, coerce to array
-                if (forcedPaths.contains(childPath)) {
+                JsonNode childNode = obj.get(f);
+                JsonNode coercedChild = forceArraysByPath(childNode, forcedPaths, childPath);
+
+                String pluralF = pluralize(f);
+                String singularF = guessSingular(f);
+                String parentPrefix = currentPath.isEmpty() ? "" : currentPath + ".";
+                boolean matchesForced =
+                        forcedPaths.contains(childPath)
+                                || forcedPaths.contains(parentPrefix + pluralF)
+                                || (singularF != null && forcedPaths.contains(parentPrefix + singularF));
+
+                if (matchesForced) {
+                    String targetKey = pluralF;
+                    // If key should be pluralized, move under plural key
+                    if (!f.equals(targetKey)) {
+                        obj.remove(f);
+                    }
                     if (coercedChild == null || coercedChild.isNull()) {
                         ArrayNode emptyArr = obj.arrayNode();
-                        obj.set(f, emptyArr);
+                        obj.set(targetKey, emptyArr);
                     } else if (coercedChild.isArray()) {
-                        obj.set(f, coercedChild);
+                        obj.set(targetKey, coercedChild);
                     } else {
                         ArrayNode wrapped = obj.arrayNode();
                         wrapped.add(coercedChild);
-                        obj.set(f, wrapped);
+                        obj.set(targetKey, wrapped);
                     }
                 } else {
                     obj.set(f, coercedChild);
@@ -161,8 +175,26 @@ public class XmlToJsonFlattened {
             for (String path : forcedPaths) {
                 if (isImmediateChildPathOf(path, currentPath)) {
                     String childKey = getImmediateChildKey(path, currentPath);
-                    if (childKey != null && !obj.has(childKey)) {
-                        obj.set(childKey, obj.arrayNode());
+                    if (childKey != null) {
+                        String pluralKey = pluralize(childKey);
+                        if (!obj.has(pluralKey)) {
+                            // If singular exists, rename it to plural and wrap if needed
+                            if (obj.has(childKey)) {
+                                JsonNode existing = obj.get(childKey);
+                                obj.remove(childKey);
+                                if (existing == null || existing.isNull()) {
+                                    obj.set(pluralKey, obj.arrayNode());
+                                } else if (existing.isArray()) {
+                                    obj.set(pluralKey, existing);
+                                } else {
+                                    ArrayNode wrapped = obj.arrayNode();
+                                    wrapped.add(existing);
+                                    obj.set(pluralKey, wrapped);
+                                }
+                            } else {
+                                obj.set(pluralKey, obj.arrayNode());
+                            }
+                        }
                     }
                 }
             }
@@ -197,6 +229,26 @@ public class XmlToJsonFlattened {
         String remainder = path.substring(parentPath.length() + 1);
         int dot = remainder.indexOf('.');
         return dot == -1 ? remainder : remainder.substring(0, dot);
+    }
+
+    private static String pluralize(String singular) {
+        if (singular == null || singular.isEmpty()) return singular;
+        String s = singular;
+        // Already ends with 's' -> consider plural already
+        if (s.endsWith("s")) return s;
+        // word ends with consonant + 'y' -> replace with 'ies'
+        if (s.endsWith("y") && s.length() > 1) {
+            char beforeY = s.charAt(s.length() - 2);
+            if (!isVowel(beforeY)) {
+                return s.substring(0, s.length() - 1) + "ies";
+            }
+        }
+        return s + "s";
+    }
+
+    private static boolean isVowel(char c) {
+        char lc = Character.toLowerCase(c);
+        return lc == 'a' || lc == 'e' || lc == 'i' || lc == 'o' || lc == 'u';
     }
 
     // ---------- Type coercion ----------
