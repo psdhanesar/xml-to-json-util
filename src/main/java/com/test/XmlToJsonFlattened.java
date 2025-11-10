@@ -4,9 +4,11 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,6 +26,7 @@ public class XmlToJsonFlattened {
         TransformConfig config = loadTransformConfig(jsonMapper, "transform-config.json");
         Map<String, String> renameMap = config.renameMap != null ? config.renameMap : Map.of();
         Map<String, WrapperRule> wrapperRules = config.wrappers != null ? config.wrappers : Map.of();
+        Set<String> forceArrayPaths = config.forceArrays != null ? new HashSet<>(config.forceArrays) : Set.of();
 
         // === 2. Read XML input from resources ===
         XmlMapper xmlMapper = new XmlMapper();
@@ -35,7 +38,8 @@ public class XmlToJsonFlattened {
         // Only normalize arrays for plural->singular wrapper structures (e.g., trades -> trade)
         JsonNode normalizedWrappers = normalizeWrapperArrays(renamed, wrapperRules);
         JsonNode flattened = flattenWrappers(normalizedWrappers, wrapperRules);
-        JsonNode typed = coerceScalarTypes(flattened);
+        JsonNode forcedArrays = forceArraysByPath(flattened, forceArrayPaths);
+        JsonNode typed = coerceScalarTypes(forcedArrays);
 
         // === 4. Write to JSON file in /target/output.json (or just print) ===
         String outputJson = jsonMapper.writerWithDefaultPrettyPrinter().writeValueAsString(typed);
@@ -120,6 +124,79 @@ public class XmlToJsonFlattened {
             return arr;
         }
         return node;
+    }
+
+    // ---------- Force arrays by full path ----------
+    private static JsonNode forceArraysByPath(JsonNode node, Set<String> forcedPaths) {
+        return forceArraysByPath(node, forcedPaths, "");
+    }
+
+    private static JsonNode forceArraysByPath(JsonNode node, Set<String> forcedPaths, String currentPath) {
+        if (node == null) return null;
+        if (node.isObject()) {
+            ObjectNode obj = (ObjectNode) node;
+            // Recurse children first
+            List<String> fieldNames = new ArrayList<>();
+            obj.fieldNames().forEachRemaining(fieldNames::add);
+            for (String f : fieldNames) {
+                String childPath = currentPath.isEmpty() ? f : currentPath + "." + f;
+                JsonNode coercedChild = forceArraysByPath(obj.get(f), forcedPaths, childPath);
+                // If this child's path must be an array, coerce to array
+                if (forcedPaths.contains(childPath)) {
+                    if (coercedChild == null || coercedChild.isNull()) {
+                        ArrayNode emptyArr = obj.arrayNode();
+                        obj.set(f, emptyArr);
+                    } else if (coercedChild.isArray()) {
+                        obj.set(f, coercedChild);
+                    } else {
+                        ArrayNode wrapped = obj.arrayNode();
+                        wrapped.add(coercedChild);
+                        obj.set(f, wrapped);
+                    }
+                } else {
+                    obj.set(f, coercedChild);
+                }
+            }
+            // Ensure missing immediate children for forced paths become empty arrays
+            for (String path : forcedPaths) {
+                if (isImmediateChildPathOf(path, currentPath)) {
+                    String childKey = getImmediateChildKey(path, currentPath);
+                    if (childKey != null && !obj.has(childKey)) {
+                        obj.set(childKey, obj.arrayNode());
+                    }
+                }
+            }
+            return obj;
+        } else if (node.isArray()) {
+            ArrayNode arr = (ArrayNode) node;
+            for (int i = 0; i < arr.size(); i++) {
+                arr.set(i, forceArraysByPath(arr.get(i), forcedPaths, currentPath));
+            }
+            return arr;
+        } else {
+            // Primitive node; coercion happens at parent when path matches
+            return node;
+        }
+    }
+
+    private static boolean isImmediateChildPathOf(String path, String parentPath) {
+        if (parentPath == null || parentPath.isEmpty()) {
+            return !path.isEmpty() && !path.contains("."); // root immediate child
+        }
+        if (!path.startsWith(parentPath + ".")) return false;
+        String remainder = path.substring(parentPath.length() + 1);
+        return !remainder.isEmpty() && !remainder.contains(".");
+    }
+
+    private static String getImmediateChildKey(String path, String parentPath) {
+        if (parentPath == null || parentPath.isEmpty()) {
+            int dot = path.indexOf('.');
+            return dot == -1 ? path : path.substring(0, dot);
+        }
+        if (!path.startsWith(parentPath + ".")) return null;
+        String remainder = path.substring(parentPath.length() + 1);
+        int dot = remainder.indexOf('.');
+        return dot == -1 ? remainder : remainder.substring(0, dot);
     }
 
     // ---------- Type coercion ----------
@@ -243,8 +320,19 @@ public class XmlToJsonFlattened {
             return "";
         }
         StringBuilder result = new StringBuilder();
-        for (String part : parts) {
+        for (int i = 0; i < parts.length; i++) {
+            String part = parts[i];
             if (part.isEmpty()) continue;
+            boolean isLast = (i == parts.length - 1);
+            // Preserve trailing "ID" acronym in upper-case when it's the final token
+            if (isLast && parts.length > 1 && "id".equalsIgnoreCase(part)) {
+                if (result.length() == 0) {
+                    result.append("id");
+                } else {
+                    result.append("ID");
+                }
+                continue;
+            }
             String lower = part.toLowerCase(Locale.ROOT);
             if (result.length() == 0) {
                 result.append(lower);
@@ -396,6 +484,7 @@ public class XmlToJsonFlattened {
     public static class TransformConfig {
         public Map<String, String> renameMap;
         public Map<String, WrapperRule> wrappers;
+        public List<String> forceArrays; // dot-separated full JSON paths to force arrays
     }
 
     public static class WrapperRule {

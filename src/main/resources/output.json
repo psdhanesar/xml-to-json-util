@@ -1,12 +1,12 @@
 {
   "applications" : [ {
-    "appId" : "APP-001",
+    "appID" : "APP-001",
     "customers" : [ {
       "firstName" : "John",
       "lastName" : "Doe",
       "tuFfrReport" : {
         "trades" : [ {
-          "tradeId" : 123,
+          "tradeID" : 123,
           "amount" : 1000,
           "currency" : "CAD"
         } ]
@@ -16,11 +16,11 @@
       "lastName" : "Smith",
       "tuFfrReport" : {
         "trades" : [ {
-          "tradeId" : 999,
+          "tradeID" : 999,
           "amount" : 2500,
           "currency" : "USD"
         }, {
-          "tradeId" : 1000,
+          "tradeID" : 1000,
           "amount" : 3000,
           "currency" : "USD"
         } ]

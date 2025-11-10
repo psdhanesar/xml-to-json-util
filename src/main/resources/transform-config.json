@@ -4,5 +4,6 @@
   },
   "wrappers": {
     "names": {"singular": "name", "flattenSimpleValues": true}
-  }
+  },
+  "forceArrays": ["applications.customers"]
 }
