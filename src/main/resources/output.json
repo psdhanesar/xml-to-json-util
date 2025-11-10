@@ -6,8 +6,8 @@
       "lastName" : "Doe",
       "tuFfrReport" : {
         "trades" : [ {
-          "tradeId" : "123",
-          "amount" : "1000",
+          "tradeId" : 123,
+          "amount" : 1000,
           "currency" : "CAD"
         } ]
       }
@@ -16,12 +16,12 @@
       "lastName" : "Smith",
       "tuFfrReport" : {
         "trades" : [ {
-          "tradeId" : "999",
-          "amount" : "2500",
+          "tradeId" : 999,
+          "amount" : 2500,
           "currency" : "USD"
         }, {
-          "tradeId" : "1000",
-          "amount" : "3000",
+          "tradeId" : 1000,
+          "amount" : 3000,
           "currency" : "USD"
         } ]
       },

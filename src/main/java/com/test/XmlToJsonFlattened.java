@@ -11,6 +11,7 @@ import java.util.Map;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 
@@ -34,9 +35,10 @@ public class XmlToJsonFlattened {
         // Only normalize arrays for plural->singular wrapper structures (e.g., trades -> trade)
         JsonNode normalizedWrappers = normalizeWrapperArrays(renamed, wrapperRules);
         JsonNode flattened = flattenWrappers(normalizedWrappers, wrapperRules);
+        JsonNode typed = coerceScalarTypes(flattened);
 
         // === 4. Write to JSON file in /target/output.json (or just print) ===
-        String outputJson = jsonMapper.writerWithDefaultPrettyPrinter().writeValueAsString(flattened);
+        String outputJson = jsonMapper.writerWithDefaultPrettyPrinter().writeValueAsString(typed);
         Files.writeString(Path.of("src/main/resources/output.json"), outputJson);
         System.out.println(outputJson);
     }
@@ -118,6 +120,84 @@ public class XmlToJsonFlattened {
             return arr;
         }
         return node;
+    }
+
+    // ---------- Type coercion ----------
+    private static JsonNode coerceScalarTypes(JsonNode node) {
+        if (node == null) return null;
+        if (node.isObject()) {
+            ObjectNode obj = (ObjectNode) node;
+            List<String> fieldNames = new ArrayList<>();
+            obj.fieldNames().forEachRemaining(fieldNames::add);
+            for (String f : fieldNames) {
+                obj.set(f, coerceScalarTypes(obj.get(f)));
+            }
+            return obj;
+        }
+        if (node.isArray()) {
+            ArrayNode arr = (ArrayNode) node;
+            for (int i = 0; i < arr.size(); i++) {
+                arr.set(i, coerceScalarTypes(arr.get(i)));
+            }
+            return arr;
+        }
+        if (node.isTextual()) {
+            return coerceTextNode(node.asText());
+        }
+        return node;
+    }
+
+    private static JsonNode coerceTextNode(String text) {
+        JsonNodeFactory f = JsonNodeFactory.instance;
+        if (text == null) {
+            return f.nullNode();
+        }
+        String trimmed = text.trim();
+        if (trimmed.isEmpty()) {
+            return f.textNode(text);
+        }
+
+        String lower = trimmed.toLowerCase(Locale.ROOT);
+        if ("true".equals(lower)) return f.booleanNode(true);
+        if ("false".equals(lower)) return f.booleanNode(false);
+        if ("null".equals(lower)) return f.nullNode();
+
+        // Integer (fits into long)
+        if (isIntegerString(trimmed)) {
+            try {
+                long l = Long.parseLong(trimmed);
+                if (l >= Integer.MIN_VALUE && l <= Integer.MAX_VALUE) {
+                    return f.numberNode((int) l);
+                } else {
+                    return f.numberNode(l);
+                }
+            } catch (NumberFormatException ignored) {
+                // fallthrough to decimal
+            }
+        }
+
+        // Decimal or scientific notation
+        if (isDecimalString(trimmed)) {
+            try {
+                java.math.BigDecimal bd = new java.math.BigDecimal(trimmed);
+                return f.numberNode(bd);
+            } catch (NumberFormatException ignored) {
+                // fallthrough to text
+            }
+        }
+
+        return f.textNode(text);
+    }
+
+    private static boolean isIntegerString(String s) {
+        // optional leading minus, then digits
+        return s.matches("^-?\\d+$");
+    }
+
+    private static boolean isDecimalString(String s) {
+        // Accept forms like: -1.23, 1e10, -2.3E-5, 10., .5 (not allowing .5 to avoid ambiguity)
+        // We choose a conservative pattern requiring at least one digit before decimal point.
+        return s.matches("^-?\\d+\\.\\d+([eE][+-]?\\d+)?$") || s.matches("^-?\\d+([eE][+-]?\\d+)$");
     }
 
     private static JsonNode renameFields(JsonNode node, Map<String, String> renameMap) {
